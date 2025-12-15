@@ -15,7 +15,7 @@ from extractors.docx_reader import read_docx
 from extractors.text_cleaning import clean_text
 from llm.extractor import OllamaExtractor
 from models.schema import ExtractedFeatures
-
+from vector_embedding_conversion_pipeline import VectorEmbeddingConversionPipeline
 
 # Configure logging
 logging.basicConfig(
@@ -171,9 +171,9 @@ class FeatureExtractionPipeline:
 
                 # Print compact summary per file
                 print("\n" + "="*60)
-                print(f"EXTRACTION RESULTS - {doc.name}")
+                # print(f"EXTRACTION RESULTS - {doc.name}")
                 print("="*60)
-                print(json.dumps(result, indent=2, ensure_ascii=False))
+                # print(json.dumps(result, indent=2, ensure_ascii=False))
                 print("="*60)
             except Exception as e:
                 logger.error(f"Failed to process file {doc.name}: {e}")
@@ -205,7 +205,15 @@ def main():
             # Auto process all files from sample-data
             sample_dir = str(Path(__file__).parent / "sample-data")
             logger.info(f"No input arguments provided. Processing all .docx in: {sample_dir}")
-            pipeline.process_directory(sample_dir, str(output_dir))
+            extracted_result = pipeline.process_directory(sample_dir, str(output_dir))
+            print(f"\nProcessed {len(extracted_result)} files. Outputs saved to: {output_dir}")
+
+            # Call VectorEmbeddingConversionPipeline.convertJsontoVector
+            
+            vec_pipeline = VectorEmbeddingConversionPipeline()
+            vec_pipeline.convertJsontoVector(extracted_result, None)
+
+            
         else:
             # Process explicit file
             input_file = Path(sys.argv[1])
