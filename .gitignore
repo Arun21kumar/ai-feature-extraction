@@ -51,3 +51,15 @@ output/
 *.docx
 *.json
 
+# Reasoning Engine - Sensitive files
+.env
+*.xlsx
+app.log
+sample_email.html
+*credentials*.json
+service-account*.json
+
+# Resume files
+resumes/
+*.pdf
+

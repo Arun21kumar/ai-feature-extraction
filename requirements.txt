@@ -5,3 +5,13 @@ requests>=2.31.0
 python-docx>=0.8.11
 unstructured
 python-magic==0.4.27
+
+# Reasoning Engine Dependencies
+google-auth==2.23.0
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+google-api-python-client==2.100.0
+numpy==1.26.4
+pandas==2.1.1
+openpyxl==3.1.2
+python-dotenv==1.0.0
