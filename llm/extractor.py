@@ -375,12 +375,14 @@ class OllamaExtractor:
         except Exception:
             return None
 
-    def _validate_and_clean_data(self, data: Dict[str, Any]) -> ExtractedFeatures:
+    def _validate_and_clean_data(self, data: Dict[str, Any], *, document_text: str) -> ExtractedFeatures:
         """
         Validate and clean extracted data to match the simplified schema.
+        Also applies JD-specific fallback for preferred experience detection
+        from raw document text when missing or ambiguous.
         """
         # Ensure all required fields exist with correct types
-        cleaned = {
+        cleaned: Dict[str, Any] = {
             "document_type": str(data.get("document_type", "")).strip(),
             "summary": str(data.get("summary", "")).strip(),
             "experience_years": None,
@@ -389,6 +391,10 @@ class OllamaExtractor:
             "responsibilities": []
         }
 
+        # Fallback detection if model fails to set document_type
+        if not cleaned["document_type"]:
+            cleaned["document_type"] = self._detect_doc_type(document_text)
+
         # Handle experience_years
         exp_years = data.get("experience_years")
         if isinstance(exp_years, (int, float)):
@@ -396,6 +402,13 @@ class OllamaExtractor:
         elif isinstance(exp_years, str):
             # Use the robust numeric parsing for strings
             cleaned["experience_years"] = self._extract_years_from_text(exp_years)
+
+        # JD-specific preferred years fallback from text if missing/low
+        if cleaned["document_type"] == "jd":
+            preferred = self._extract_required_years(document_text)
+            if preferred:
+                if cleaned["experience_years"] is None or cleaned["experience_years"] < preferred:
+                    cleaned["experience_years"] = preferred
 
         # Clean and deduplicate list fields
         for field in ["skills", "certifications", "responsibilities"]:
@@ -448,10 +461,7 @@ class OllamaExtractor:
             # If we have valid data, validate and return
             if data is not None:
                 try:
-                    features = self._validate_and_clean_data(data)
-                    # Fallback detection if model fails to set it
-                    if not features.document_type:
-                        features.document_type = self._detect_doc_type(document_text)
+                    features = self._validate_and_clean_data(data, document_text=document_text)
                     logger.info("Successfully extracted and validated features.")
                     return features
                 except Exception as e:

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Optional, List
 import nltk
 import ssl
-import os
 
 from extractors.docx_reader import read_docx
 from extractors.text_cleaning import clean_text
@@ -132,7 +131,7 @@ class FeatureExtractionPipeline:
             output_dir: Directory to write JSON outputs
 
         Returns:
-            List of output file paths written
+            List of output file paths written or found
         """
         in_path = Path(input_dir)
         out_path = Path(output_dir)
@@ -165,16 +164,16 @@ class FeatureExtractionPipeline:
                     out_name = f"{stem}.json"
 
                 out_file = out_path / out_name
-                logger.info(f"\nProcessing: {doc} -> {out_file}")
-                result = self.process_file_to_json(str(doc), str(out_file))
-                outputs.append(out_file)
 
-                # Print compact summary per file
-                print("\n" + "="*60)
-                # print(f"EXTRACTION RESULTS - {doc.name}")
-                print("="*60)
-                # print(json.dumps(result, indent=2, ensure_ascii=False))
-                print("="*60)
+                # Skip extraction if output already exists
+                if out_file.exists():
+                    logger.info(f"Skipping extraction (exists): {out_file.name}")
+                    outputs.append(out_file)
+                    continue
+
+                logger.info(f"Processing: {doc} -> {out_file}")
+                self.process_file_to_json(str(doc), str(out_file))
+                outputs.append(out_file)
             except Exception as e:
                 logger.error(f"Failed to process file {doc.name}: {e}")
                 # Continue to the next file
@@ -185,7 +184,7 @@ class FeatureExtractionPipeline:
 
 def main():
     """
-    Command-line interface for the feature extraction pipeline.
+    CLI for the feature extraction + vectorization pipeline.
 
     Usage:
         - No args: process all .docx files in sample-data and write outputs to output/
@@ -205,15 +204,13 @@ def main():
             # Auto process all files from sample-data
             sample_dir = str(Path(__file__).parent / "sample-data")
             logger.info(f"No input arguments provided. Processing all .docx in: {sample_dir}")
-            extracted_result = pipeline.process_directory(sample_dir, str(output_dir))
-            print(f"\nProcessed {len(extracted_result)} files. Outputs saved to: {output_dir}")
+            extracted_files = pipeline.process_directory(sample_dir, str(output_dir))
+            logger.info(f"Processed {len(extracted_files)} files. Outputs saved to: {output_dir}")
 
-            # Call VectorEmbeddingConversionPipeline.convertJsontoVector
-            
+            # Vector embedding conversion (idempotent)
             vec_pipeline = VectorEmbeddingConversionPipeline()
-            vec_pipeline.convertJsontoVector(extracted_result, None)
-
-            
+            vec_paths = vec_pipeline.convertJsontoVector(extracted_files)
+            logger.info(f"Vectorized {len(vec_paths)} files into vector_output/")
         else:
             # Process explicit file
             input_file = Path(sys.argv[1])
@@ -225,15 +222,12 @@ def main():
                 stem = input_file.stem.replace(" ", "_")
                 output_file = output_dir / f"jd_{stem}.json"
 
-            logger.info(f"\nProcessing: {input_file} -> {output_file}")
+            logger.info(f"Processing: {input_file} -> {output_file}")
             result = pipeline.process_file_to_json(str(input_file), str(output_file))
 
-            # Print results
-            print("\n" + "="*60)
-            print(f"EXTRACTION RESULTS - {input_file.name}")
-            print("="*60)
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            print("="*60)
+            # Vectorize the single output
+            vec_pipeline = VectorEmbeddingConversionPipeline()
+            vec_pipeline.convertJsontoVector([output_file])
 
     except FileNotFoundError as e:
         print(f"Error: {e}")
