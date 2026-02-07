@@ -157,41 +157,61 @@ class CandidateScreeningEngine:
         else:
             return "Rejected"
     
-    def generate_reasoning(self, similarity_score: float, decision: str) -> str:
+    def generate_reasoning(self, similarity_score: float, decision: str, section_scores: dict = None) -> str:
         """
         Generate professional reasoning text based on decision outcome.
         
         Args:
             similarity_score: Candidate's similarity score
             decision: Hiring decision (Shortlisted/Maybe/Rejected)
+            section_scores: Optional dict with section-wise scores (summary, skills, responsibilities, certifications)
             
         Returns:
             Detailed reasoning text explaining the decision
         """
         score_formatted = f"{similarity_score:.1f}%"
         
+        # Build detailed section analysis if available
+        section_analysis = ""
+        if section_scores and isinstance(section_scores, dict):
+            highlights = []
+            concerns = []
+            
+            for section, score in section_scores.items():
+                if section == 'overall_score':
+                    continue
+                if score >= 70:
+                    highlights.append(f"{section.capitalize()}: {score:.1f}%")
+                elif score < 50:
+                    concerns.append(f"{section.capitalize()}: {score:.1f}%")
+            
+            if highlights:
+                section_analysis = f" Strong areas: {', '.join(highlights)}."
+            if concerns:
+                section_analysis += f" Areas for review: {', '.join(concerns)}."
+        
         reasoning_templates = {
             "Shortlisted": (
-                f"Strong match with job requirements. Similarity score: {score_formatted}. "
+                f"Strong match with job requirements. Overall similarity score: {score_formatted}.{section_analysis} "
                 f"Candidate demonstrates excellent alignment with required skills and qualifications. "
                 f"The high similarity score indicates strong compatibility with the position requirements, "
                 f"making this candidate a prime choice for further interview rounds."
             ),
             "Maybe": (
-                f"Moderate match with requirements. Similarity score: {score_formatted}. "
+                f"Moderate match with requirements. Overall similarity score: {score_formatted}.{section_analysis} "
                 f"Candidate shows partial alignment with job requirements. "
                 f"Recommended for further review and interview assessment to evaluate potential fit. "
                 f"Additional screening may reveal transferable skills or growth potential."
             ),
             "Rejected": (
-                f"Insufficient match with job requirements. Similarity score: {score_formatted}. "
+                f"Insufficient match with job requirements. Overall similarity score: {score_formatted}.{section_analysis} "
                 f"Candidate's profile does not meet the minimum threshold for this position. "
                 f"The similarity score indicates limited alignment with required competencies and qualifications. "
                 f"Consider for alternative positions or future opportunities with different requirements."
             )
         }
         
-        return reasoning_templates.get(decision, f"Similarity score: {score_formatted}")
+        return reasoning_templates.get(decision, f"Overall similarity score: {score_formatted}")
     
     def upload_resume_to_drive(self, file_path: str, candidate_name: str) -> str:
         """
@@ -256,8 +276,11 @@ class CandidateScreeningEngine:
                 decision = self.determine_decision(similarity_score)
                 stats[decision] += 1
                 
-                # Generate reasoning
-                reasoning = self.generate_reasoning(similarity_score, decision)
+                # Get section scores if available
+                section_scores = candidate.get('section_scores', {})
+                
+                # Generate reasoning with section scores
+                reasoning = self.generate_reasoning(similarity_score, decision, section_scores)
                 
                 # --- CACHING & UPLOAD LOGIC ---
                 resume_path = candidate.get('resume_file_path')
