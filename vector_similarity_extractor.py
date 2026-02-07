@@ -5,7 +5,8 @@ from numpy.linalg import norm
 
 class VectorSimilarityExtractor:
     def compute_similarity(self, vector1, vector2):
-        print("Computing similarity between:", vector1, "and", vector2)
+        print("Computing similarity between passed vectors.")
+
 
         # Parse JSON if passed as string
         if isinstance(vector1, str):

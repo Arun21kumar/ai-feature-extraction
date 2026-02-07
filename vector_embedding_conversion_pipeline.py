@@ -10,7 +10,6 @@ class VectorEmbeddingConversionPipeline:
             with open(path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 file_contents.append(content)
-        print("Loaded file contents:", file_contents)
 
         vector_output_dir = os.path.join(os.path.dirname(file_path[0]), "../vector_output")
         os.makedirs(vector_output_dir, exist_ok=True)
@@ -61,8 +60,8 @@ class VectorEmbeddingConversionPipeline:
 
         # After all files processed, call VectorSimilarityExtractor.compute_similarity with the two files' contents
         from vector_similarity_extractor import VectorSimilarityExtractor
-        file2 = "/Users/poojamanikandan/ai-feature-extraction/output/../vector_output/Rajesh_Kummara-NetworkL3-SME-11yrs-BLR.docx.json.vector.json"
-        file1 = "/Users/poojamanikandan/ai-feature-extraction/output/../vector_output/Sr_Network_Engineer_(US049I_E).json.vector.json"
+        file2 = "/Users/arunkumar/Documents/AI_UNIVERSITY/jd-feature-extraction/vector_output/resume_Arun_Resume.json.vector.json"
+        file1 = "/Users/arunkumar/Documents/AI_UNIVERSITY/jd-feature-extraction/vector_output/jd_Java_-_JD.json.vector.json"
         try:
             with open(file1, 'r', encoding='utf-8') as f1, open(file2, 'r', encoding='utf-8') as f2:
                 content1 = f1.read()

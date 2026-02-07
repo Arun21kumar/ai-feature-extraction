@@ -16,6 +16,7 @@ from extractors.text_cleaning import clean_text
 from llm.extractor import OllamaExtractor
 from models.schema import ExtractedFeatures
 from vector_embedding_conversion_pipeline import VectorEmbeddingConversionPipeline
+from fetch_resume_service import load_credentials, connect_to_gmail_imap, list_matched_email_subjects, download_attachments_by_subject
 
 # Configure logging
 logging.basicConfig(
@@ -169,12 +170,7 @@ class FeatureExtractionPipeline:
                 result = self.process_file_to_json(str(doc), str(out_file))
                 outputs.append(out_file)
 
-                # Print compact summary per file
-                print("\n" + "="*60)
-                # print(f"EXTRACTION RESULTS - {doc.name}")
-                print("="*60)
-                # print(json.dumps(result, indent=2, ensure_ascii=False))
-                print("="*60)
+                print(f"EXTRACTION RESULTS - {doc.name}")
             except Exception as e:
                 logger.error(f"Failed to process file {doc.name}: {e}")
                 # Continue to the next file
@@ -197,13 +193,19 @@ def main():
     import os
     model = os.environ.get("MODEL", "llama3.1:8b")
 
+    user, password = load_credentials("credentials.yaml")
+    mail = connect_to_gmail_imap(user, password)
+    SUBJECT_TO_FILTER = "Resume"
+    list_matched_email_subjects(mail, SUBJECT_TO_FILTER)
+    download_attachments_by_subject(mail, SUBJECT_TO_FILTER)
+
     try:
         pipeline = FeatureExtractionPipeline(model=model)
         output_dir = Path(__file__).parent / "output"
 
         if len(sys.argv) < 2:
-            # Auto process all files from sample-data
-            sample_dir = str(Path(__file__).parent / "sample-data")
+            # Auto process all files from downloaded_attachments
+            sample_dir = str(Path(__file__).parent / "downloaded_attachments")
             logger.info(f"No input arguments provided. Processing all .docx in: {sample_dir}")
             extracted_result = pipeline.process_directory(sample_dir, str(output_dir))
             print(f"\nProcessed {len(extracted_result)} files. Outputs saved to: {output_dir}")
@@ -229,11 +231,7 @@ def main():
             result = pipeline.process_file_to_json(str(input_file), str(output_file))
 
             # Print results
-            print("\n" + "="*60)
             print(f"EXTRACTION RESULTS - {input_file.name}")
-            print("="*60)
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            print("="*60)
 
     except FileNotFoundError as e:
         print(f"Error: {e}")
