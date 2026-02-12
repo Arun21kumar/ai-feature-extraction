@@ -1,35 +1,44 @@
+import hashlib
+import json
+from sentence_transformers import SentenceTransformer
+import os
+
 class VectorEmbeddingConversionPipeline:
-    def convertJsontoVector(self, file_path, param2):
-        print("Converting JSON to vector with input:", file_path, "and param2:", param2)
-        import json
-        from sentence_transformers import SentenceTransformer
-        import os
+    def _compute_checksum(self, content):
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def convertJsontoVector(self, file_paths, param2):
+        print("Converting JSON to vector with input:", file_paths, "and param2:", param2)
         model = SentenceTransformer('Qwen/Qwen3-Embedding-0.6B')
-        file_contents = []
-        for path in file_path:
+        vector_output_dir = os.path.join(os.path.dirname(file_paths[0]), "../vector_output")
+        os.makedirs(vector_output_dir, exist_ok=True)
+        for path in file_paths:
             with open(path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                file_contents.append(content)
-
-        vector_output_dir = os.path.join(os.path.dirname(file_path[0]), "../vector_output")
-        os.makedirs(vector_output_dir, exist_ok=True)
-        for idx, content in enumerate(file_contents):
+            checksum = self._compute_checksum(content)
+            base_name = os.path.basename(str(path))
+            out_path = os.path.join(vector_output_dir, base_name + ".vector.json")
+            # Check for stale vector file
+            if os.path.exists(out_path):
+                with open(out_path, 'r', encoding='utf-8') as vf:
+                    try:
+                        vdata = json.load(vf)
+                        if vdata.get('checksum') == checksum:
+                            print(f"Vector file up-to-date: {out_path}")
+                            continue
+                        else:
+                            print(f"Stale vector file detected, regenerating: {out_path}")
+                    except Exception:
+                        print(f"Corrupt vector file, regenerating: {out_path}")
             try:
                 data = json.loads(content)
             except Exception as e:
-                print(f"Error loading JSON from file {file_path[idx]}: {e}")
+                print(f"Error loading JSON from file {path}: {e}")
                 continue
-
-            # Prepare output structure
             output = {}
-            # Copy metadata fields as-is (not embedded)
+            output['checksum'] = checksum
             for meta_field in ["document_type", "experience_years"]:
-                if meta_field in data:
-                    output[meta_field] = data[meta_field]
-                else:
-                    output[meta_field] = None
-
-            # Embedding fields
+                output[meta_field] = data.get(meta_field, None)
             embedding_fields = ["summary", "skills", "responsibilities", "certifications"]
             embeddings = {}
             for field in embedding_fields:
@@ -37,37 +46,39 @@ class VectorEmbeddingConversionPipeline:
                 if value is None:
                     embeddings[field] = []
                 elif isinstance(value, list):
-                    if value:
-                        vectors = model.encode([str(v) for v in value])
+                    clean_values = [v for v in value if isinstance(v, str)]
+                    if clean_values:
+                        vectors = model.encode(clean_values)
                         embeddings[field] = [vec.tolist() for vec in vectors]
                     else:
                         embeddings[field] = []
                 else:
-                    vec = model.encode(str(value)).tolist()
-                    embeddings[field] = [vec]
+                    if isinstance(value, str):
+                        vec = model.encode(value).tolist()
+                        embeddings[field] = [vec]
+                    else:
+                        embeddings[field] = []
             output["embeddings"] = embeddings
-
-            # Ensure all embeddings have the same dimension
-            dims = [len(vec[0]) for vec in embeddings.values() if vec]
-            if dims and not all(d == dims[0] for d in dims):
-                print(f"Warning: Not all embeddings have the same dimension in file {file_path[idx]}")
-
-            base_name = os.path.basename(str(file_path[idx]))
+            # Log vector shapes and stats
+            for field, vecs in embeddings.items():
+                if vecs:
+                    print(f"Field '{field}' - {len(vecs)} vectors, dim {len(vecs[0]) if vecs else 0}")
+                    arr = [v for v in vecs]
+                    flat = [item for sublist in arr for item in sublist]
+                    print(f"Stats for '{field}': min={min(flat):.4f}, max={max(flat):.4f}, mean={sum(flat)/len(flat):.4f}")
             out_path = os.path.join(vector_output_dir, base_name + ".vector.json")
             with open(out_path, 'w', encoding='utf-8') as f:
                 json.dump(output, f, indent=2, ensure_ascii=False)
             print(f"Vector embedding output written to: {out_path}")
 
-        # After all files processed, call VectorSimilarityExtractor.compute_similarity with the two files' contents
+
+        # Dynamic similarity computation
         from vector_similarity_extractor import VectorSimilarityExtractor
-        file2 = "/Users/arunkumar/Documents/AI_UNIVERSITY/jd-feature-extraction/vector_output/resume_Arun_Resume.json.vector.json"
-        file1 = "/Users/arunkumar/Documents/AI_UNIVERSITY/jd-feature-extraction/vector_output/jd_Java_-_JD.json.vector.json"
-        try:
-            with open(file1, 'r', encoding='utf-8') as f1, open(file2, 'r', encoding='utf-8') as f2:
+        vector_files = [os.path.join(vector_output_dir, os.path.basename(str(p)) + ".vector.json") for p in file_paths]
+        if len(vector_files) >= 2:
+            print(f"Comparing vectors: {vector_files[0]} vs {vector_files[1]}")
+            with open(vector_files[0], 'r', encoding='utf-8') as f1, open(vector_files[1], 'r', encoding='utf-8') as f2:
                 content1 = f1.read()
                 content2 = f2.read()
-        except Exception as e:
-            print(f"Error reading vector files for similarity: {e}")
-            return
-        similarity_extractor = VectorSimilarityExtractor()
-        similarity_extractor.compute_similarity(content1, content2)
+            similarity_extractor = VectorSimilarityExtractor()
+            similarity_extractor.compute_similarity(content1, content2)

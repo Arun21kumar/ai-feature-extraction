@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Optional, List
 import nltk
 import ssl
-import os
 
 from extractors.docx_reader import read_docx
 from extractors.text_cleaning import clean_text
@@ -53,7 +52,6 @@ class FeatureExtractionPipeline:
     """
     Complete pipeline for extracting features from DOCX documents.
     """
-
     def __init__(
         self,
         model: str = "llama3.1:8b",
@@ -114,14 +112,27 @@ class FeatureExtractionPipeline:
         features = self.process_file(file_path)
         result = features.to_dict()
 
+        # Improved naming convention
+        input_path = Path(file_path)
+        stem = input_path.stem.replace(' ', '_').replace('-', '_')
+        if 'resume' in stem.lower():
+            person_name = stem.lower().replace('resume', '').replace('_', '').strip()
+            json_name = f"{person_name}_resume.json"
+        elif 'jd' in stem.lower() or 'job' in stem.lower():
+            jd_name = stem.lower().replace('jd', '').replace('job', '').replace('_', '').strip()
+            json_name = f"{jd_name}_jd.json"
+        else:
+            json_name = f"{stem}.json"
         if output_path:
             output_file = Path(output_path)
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            output_file = input_path.parent / json_name
+        output_file.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(result, f, indent=2, ensure_ascii=False)
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"Results saved to: {output_path}")
+        logger.info(f"Results saved to: {output_file}")
 
         return result
 
@@ -179,6 +190,56 @@ class FeatureExtractionPipeline:
         return outputs
 
 
+def detect_resume_domain(resume_json_path):
+    with open(resume_json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    skills = data.get('skills', [])
+    summary = data.get('summary', '').lower()
+    if any('java' in skill.lower() for skill in skills) or 'java' in summary:
+        return 'java'
+    if any('network' in skill.lower() for skill in skills) or 'network' in summary:
+        return 'network'
+    return 'unknown'
+
+
+def find_matching_jd(domain):
+    jd_dir = Path(__file__).parent / 'jd_documents'
+    vector_output_dir = Path(__file__).parent / 'vector_output'
+    docx_files = list(jd_dir.glob('*.docx'))
+    for docx_file in docx_files:
+        stem = docx_file.stem.replace(' ', '_').replace('-', '_')
+        if 'jd' in stem.lower() or 'job' in stem.lower():
+            jd_name = stem.lower().replace('jd', '').replace('job', '').replace('_', '').strip()
+            json_name = f"{jd_name}_jd.json"
+            vector_name = f"{jd_name}_jd-vector.json"
+        else:
+            json_name = f"{stem}.json"
+            vector_name = f"{stem}-vector.json"
+        json_path = jd_dir / json_name
+        vector_path = vector_output_dir / vector_name
+        if not json_path.exists():
+            print(f"[INFO] Extracting features from {docx_file} to {json_path}")
+            pipeline = FeatureExtractionPipeline()
+            pipeline.process_file_to_json(str(docx_file), str(json_path))
+        if not vector_path.exists():
+            print(f"[INFO] Converting JD JSON to vector: {json_path} -> {vector_path}")
+            vec_pipeline = VectorEmbeddingConversionPipeline()
+            vec_pipeline.convertJsontoVector([str(json_path)], vector_name)
+    all_files = list(jd_dir.glob('*.json'))
+    print(f"[DEBUG] JD files found: {[f.name for f in all_files]}")
+    if domain == 'java':
+        for file in all_files:
+            fname = file.name.lower()
+            if 'java' in fname and 'jd' in fname:
+                return str(file)
+    elif domain == 'network':
+        for file in all_files:
+            fname = file.name.lower()
+            if 'network' in fname and 'engineer' in fname and 'jd' in fname:
+                return str(file)
+    return None
+
+
 def main():
     """
     Command-line interface for the feature extraction pipeline.
@@ -202,7 +263,6 @@ def main():
     try:
         pipeline = FeatureExtractionPipeline(model=model)
         output_dir = Path(__file__).parent / "output"
-
         if len(sys.argv) < 2:
             # Auto process all files from downloaded_attachments
             sample_dir = str(Path(__file__).parent / "downloaded_attachments")
@@ -210,12 +270,17 @@ def main():
             extracted_result = pipeline.process_directory(sample_dir, str(output_dir))
             print(f"\nProcessed {len(extracted_result)} files. Outputs saved to: {output_dir}")
 
-            # Call VectorEmbeddingConversionPipeline.convertJsontoVector
-            
-            vec_pipeline = VectorEmbeddingConversionPipeline()
-            vec_pipeline.convertJsontoVector(extracted_result, None)
-
-            
+            # Dynamic matching
+            for resume_path in extracted_result:
+                if 'resume' in resume_path.name.lower():
+                    domain = detect_resume_domain(resume_path)
+                    jd_path = find_matching_jd(domain)
+                    if jd_path:
+                        files_to_vector = [jd_path, str(resume_path)]
+                        vec_pipeline = VectorEmbeddingConversionPipeline()
+                        vec_pipeline.convertJsontoVector(files_to_vector, None)
+                    else:
+                        print(f"No matching JD found for domain: {domain}")
         else:
             # Process explicit file
             input_file = Path(sys.argv[1])
@@ -232,7 +297,16 @@ def main():
 
             # Print results
             print(f"EXTRACTION RESULTS - {input_file.name}")
-
+            # Dynamic matching for single file
+            if 'resume' in input_file.name.lower():
+                domain = detect_resume_domain(output_file)
+                jd_path = find_matching_jd(domain)
+                if jd_path:
+                    files_to_vector = [jd_path, str(output_file)]
+                    vec_pipeline = VectorEmbeddingConversionPipeline()
+                    vec_pipeline.convertJsontoVector(files_to_vector, None)
+                else:
+                    print(f"No matching JD found for domain: {domain}")
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
