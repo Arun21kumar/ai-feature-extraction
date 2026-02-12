@@ -15,6 +15,7 @@ from extractors.text_cleaning import clean_text
 from llm.extractor import OllamaExtractor
 from models.schema import ExtractedFeatures
 from vector_embedding_conversion_pipeline import VectorEmbeddingConversionPipeline
+from candidate_data_converter import CandidateDataConverter
 from fetch_resume_service import load_credentials, connect_to_gmail_imap, list_matched_email_subjects, download_attachments_by_subject
 
 # Configure logging
@@ -281,6 +282,75 @@ def main():
                         vec_pipeline.convertJsontoVector(files_to_vector, None)
                     else:
                         print(f"No matching JD found for domain: {domain}")
+            # Auto process all files from both downloaded_attachments and sample-data
+            base_dir = Path(__file__).parent
+            
+            # Process downloaded attachments (resumes from email)
+            downloaded_dir = base_dir / "downloaded_attachments"
+            sample_dir = base_dir / "sample-data"
+            
+            extracted_result = []
+            
+            # Process downloaded attachments if directory exists
+            if downloaded_dir.exists():
+                logger.info(f"Processing files from: {downloaded_dir}")
+                downloaded_files = pipeline.process_directory(str(downloaded_dir), str(output_dir))
+                # Convert Path objects to strings
+                extracted_result.extend([str(f) for f in downloaded_files])
+                logger.info(f"Processed {len(downloaded_files)} files from downloaded_attachments")
+            
+            # Process sample-data if directory exists (for JDs and test files)
+            if sample_dir.exists():
+                logger.info(f"Processing files from: {sample_dir}")
+                sample_files = pipeline.process_directory(str(sample_dir), str(output_dir))
+                # Convert Path objects to strings
+                extracted_result.extend([str(f) for f in sample_files])
+                logger.info(f"Processed {len(sample_files)} files from sample-data")
+            
+            if not extracted_result:
+                logger.error("No .docx files found in downloaded_attachments/ or sample-data/")
+                logger.info("Please ensure you have:")
+                logger.info("  1. Resume files in downloaded_attachments/")
+                logger.info("  2. Job description files in sample-data/")
+                sys.exit(1)
+            
+            print(f"\nTotal files processed: {len(extracted_result)}. Outputs saved to: {output_dir}")
+
+            # Stage 4: Convert JSON to vector embeddings and compute similarity
+            logger.info("\nStage 4: Converting to vector embeddings and computing similarity...")
+            vec_pipeline = VectorEmbeddingConversionPipeline()
+            similarity_results = vec_pipeline.convertJsontoVector(extracted_result, None)
+            
+            # Stage 5: Convert similarity results to reasoning engine format
+            if similarity_results:
+                logger.info("\nStage 5: Converting results for reasoning engine...")
+                converter = CandidateDataConverter()
+                candidates_file = str(output_dir / "candidates_for_reasoning_engine.json")
+                candidates = converter.convert_similarity_results(similarity_results, candidates_file)
+                
+                # Stage 6: Run reasoning engine
+                logger.info("\nStage 6: Running reasoning engine...")
+                try:
+                    from reasoning_engine import CandidateScreeningEngine
+                    
+                    excel_output = str(output_dir / f"screening_report_{Path(__file__).stem}.xlsx")
+                    engine = CandidateScreeningEngine()
+                    engine.run(input_json=candidates_file, output_excel=excel_output)
+                    
+                    logger.info("\n" + "=" * 80)
+                    logger.info("COMPLETE PIPELINE EXECUTION SUCCESSFUL")
+                    logger.info("=" * 80)
+                    logger.info(f"Total candidates processed: {len(candidates)}")
+                    logger.info(f"Excel report: {excel_output}")
+                    logger.info("Email notification sent to HR")
+                    logger.info("=" * 80)
+                    
+                except Exception as e:
+                    logger.error(f"Reasoning engine execution failed: {e}")
+                    logger.info("Similarity results and candidate data are still available in output/")
+            else:
+                logger.warning("No similarity results generated. Skipping reasoning engine.")
+            
         else:
             # Process explicit file
             input_file = Path(sys.argv[1])

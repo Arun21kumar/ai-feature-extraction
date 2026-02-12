@@ -90,6 +90,27 @@ class VectorSimilarityExtractor:
         weighted_score = sum(similarity_report[k] * weights.get(k, 0) for k in similarity_report)
         similarity_report["weighted_score"] = weighted_score
 
+        # Calculate overall score as weighted average
+        # Weights: summary=20%, skills=40%, responsibilities=30%, certifications=10%
+        weights = {
+            "summary": 0.20,
+            "skills": 0.40,
+            "responsibilities": 0.30,
+            "certifications": 0.10
+        }
+        
+        overall_score = 0.0
+        total_weight = 0.0
+        for key, weight in weights.items():
+            if key in similarity_report:
+                overall_score += similarity_report[key] * weight
+                total_weight += weight
+        
+        if total_weight > 0:
+            overall_score = overall_score / total_weight
+        
+        similarity_report["overall_score"] = float(overall_score)
+
         print(
             "Cosine similarity report (coverage-aware, percent):",
             json.dumps(similarity_report, indent=2)

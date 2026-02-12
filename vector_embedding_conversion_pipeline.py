@@ -8,33 +8,58 @@ class VectorEmbeddingConversionPipeline:
         return hashlib.md5(content.encode('utf-8')).hexdigest()
 
     def convertJsontoVector(self, file_paths, param2):
+        """
+        Convert extracted JSON files to vector embeddings and compute similarities.
+        
+        Args:
+            file_paths: List of paths to extracted JSON files
+            param2: Unused parameter (kept for backward compatibility)
+            
+        Returns:
+            List of similarity results for each resume-JD pair
+        """
         print("Converting JSON to vector with input:", file_paths, "and param2:", param2)
+        import json
+        from sentence_transformers import SentenceTransformer
+        import os
+        from pathlib import Path
+        
         model = SentenceTransformer('Qwen/Qwen3-Embedding-0.6B')
-        vector_output_dir = os.path.join(os.path.dirname(file_paths[0]), "../vector_output")
-        os.makedirs(vector_output_dir, exist_ok=True)
+        
+        # Categorize files into resumes and job descriptions
+        resumes = []
+        job_descriptions = []
+        
         for path in file_paths:
             with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            checksum = self._compute_checksum(content)
-            base_name = os.path.basename(str(path))
-            out_path = os.path.join(vector_output_dir, base_name + ".vector.json")
-            # Check for stale vector file
-            if os.path.exists(out_path):
-                with open(out_path, 'r', encoding='utf-8') as vf:
-                    try:
-                        vdata = json.load(vf)
-                        if vdata.get('checksum') == checksum:
-                            print(f"Vector file up-to-date: {out_path}")
-                            continue
-                        else:
-                            print(f"Stale vector file detected, regenerating: {out_path}")
-                    except Exception:
-                        print(f"Corrupt vector file, regenerating: {out_path}")
-            try:
-                data = json.loads(content)
-            except Exception as e:
-                print(f"Error loading JSON from file {path}: {e}")
-                continue
+                content = json.load(f)
+            
+            doc_type = content.get('document_type', '').lower()
+            if doc_type == 'resume':
+                resumes.append({'path': path, 'data': content})
+            elif doc_type == 'jd':
+                job_descriptions.append({'path': path, 'data': content})
+            else:
+                # Try to infer from filename if document_type is not set
+                filename = Path(path).name.lower()
+                if 'resume' in filename or 'cv' in filename:
+                    resumes.append({'path': path, 'data': content})
+                elif 'jd' in filename or 'job' in filename:
+                    job_descriptions.append({'path': path, 'data': content})
+        
+        print(f"Found {len(resumes)} resume(s) and {len(job_descriptions)} job description(s)")
+        
+        # Create vector output directory
+        vector_output_dir = os.path.join(os.path.dirname(file_paths[0]), "../vector_output")
+        os.makedirs(vector_output_dir, exist_ok=True)
+        
+        # Convert all files to vector embeddings
+        vector_files = []
+        for item in resumes + job_descriptions:
+            path = item['path']
+            data = item['data']
+            
+            # Prepare output structure
             output = {}
             output['checksum'] = checksum
             for meta_field in ["document_type", "experience_years"]:
@@ -59,26 +84,81 @@ class VectorEmbeddingConversionPipeline:
                     else:
                         embeddings[field] = []
             output["embeddings"] = embeddings
-            # Log vector shapes and stats
-            for field, vecs in embeddings.items():
-                if vecs:
-                    print(f"Field '{field}' - {len(vecs)} vectors, dim {len(vecs[0]) if vecs else 0}")
-                    arr = [v for v in vecs]
-                    flat = [item for sublist in arr for item in sublist]
-                    print(f"Stats for '{field}': min={min(flat):.4f}, max={max(flat):.4f}, mean={sum(flat)/len(flat):.4f}")
+
+            # Save vector file
+            base_name = os.path.basename(str(path))
             out_path = os.path.join(vector_output_dir, base_name + ".vector.json")
             with open(out_path, 'w', encoding='utf-8') as f:
                 json.dump(output, f, indent=2, ensure_ascii=False)
             print(f"Vector embedding output written to: {out_path}")
-
-
-        # Dynamic similarity computation
+            
+            vector_files.append({
+                'original_path': path,
+                'vector_path': out_path,
+                'document_type': output.get('document_type'),
+                'data': output
+            })
+        
+        # Compute similarities between all resume-JD pairs
+        similarity_results = []
+        
+        if not job_descriptions:
+            print("Warning: No job descriptions found. Cannot compute similarities.")
+            return similarity_results
+        
+        if not resumes:
+            print("Warning: No resumes found. Cannot compute similarities.")
+            return similarity_results
+        
         from vector_similarity_extractor import VectorSimilarityExtractor
-        vector_files = [os.path.join(vector_output_dir, os.path.basename(str(p)) + ".vector.json") for p in file_paths]
-        if len(vector_files) >= 2:
-            print(f"Comparing vectors: {vector_files[0]} vs {vector_files[1]}")
-            with open(vector_files[0], 'r', encoding='utf-8') as f1, open(vector_files[1], 'r', encoding='utf-8') as f2:
-                content1 = f1.read()
-                content2 = f2.read()
-            similarity_extractor = VectorSimilarityExtractor()
-            similarity_extractor.compute_similarity(content1, content2)
+        similarity_extractor = VectorSimilarityExtractor()
+        
+        # For each JD, compute similarity with all resumes
+        for jd in job_descriptions:
+            jd_vector_file = [v for v in vector_files if v['original_path'] == jd['path']][0]
+            
+            for resume in resumes:
+                resume_vector_file = [v for v in vector_files if v['original_path'] == resume['path']][0]
+                
+                print(f"\nComputing similarity between:")
+                print(f"  JD: {Path(jd['path']).name}")
+                print(f"  Resume: {Path(resume['path']).name}")
+                
+                # Read vector files
+                with open(jd_vector_file['vector_path'], 'r', encoding='utf-8') as f1, \
+                     open(resume_vector_file['vector_path'], 'r', encoding='utf-8') as f2:
+                    jd_vector_content = f1.read()
+                    resume_vector_content = f2.read()
+                
+                # Compute similarity
+                similarity_report = similarity_extractor.compute_similarity(
+                    jd_vector_content, 
+                    resume_vector_content
+                )
+                
+                # Store result with metadata
+                result = {
+                    'jd_file': jd['path'],
+                    'resume_file': resume['path'],
+                    'resume_data': resume['data'],
+                    'jd_data': jd['data'],
+                    'similarity_score': similarity_report.get('overall_score', 0.0),
+                    'section_scores': {
+                        'summary': similarity_report.get('summary', 0.0),
+                        'skills': similarity_report.get('skills', 0.0),
+                        'responsibilities': similarity_report.get('responsibilities', 0.0),
+                        'certifications': similarity_report.get('certifications', 0.0)
+                    }
+                }
+                similarity_results.append(result)
+        
+        # Save similarity results to output directory
+        output_dir = os.path.join(os.path.dirname(file_paths[0]), "../output")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        results_file = os.path.join(output_dir, "similarity_results.json")
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(similarity_results, f, indent=2, ensure_ascii=False)
+        print(f"\nSimilarity results saved to: {results_file}")
+        
+        return similarity_results
